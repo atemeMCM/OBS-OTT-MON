@@ -70,7 +70,7 @@ const CHANNELS = [
     id: 12,
     name: 'Channel 12',
     hls: 'https://debug-video.ovpobs.tv/live/ch12/hlsclear/index.m3u8',
-    dash: 'http://debug-video.ovpobs.tv/live/ch12/dashclear/Manifest.mpd'
+    dash: 'https://debug-video.ovpobs.tv/live/ch12/dashclear/Manifest.mpd'
   },
   {
     id: 13,
