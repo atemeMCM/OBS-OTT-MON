@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OTT Multi-Channel Player - 16 Channels Monitor</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Video.js CSS -->
+  <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet">
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-content">
+      <div class="logo">📺 OTT Multi-Channel Monitor</div>
+
+      <div class="controls">
+        <!-- Protocol Selector -->
+        <div class="protocol-selector">
+          <button class="protocol-btn active" data-protocol="hls">HLS</button>
+          <button class="protocol-btn" data-protocol="dash">DASH</button>
+        </div>
+
+        <!-- Control Buttons -->
+        <button class="btn" id="muteAllBtn">
+          <span>🔇</span> Mute All
+        </button>
+        <button class="btn" id="stopAllBtn">
+          <span>⏸️</span> Stop All
+        </button>
+        <button class="btn" id="reloadAllBtn">
+          <span>🔄</span> Reload All
+        </button>
+        <button class="btn" id="toggleConfigBtn">
+          <span>⚙️</span> Configure
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="container">
+    <!-- Video Grid -->
+    <div class="video-grid" id="videoGrid">
+      <!-- Video players will be dynamically inserted here -->
+    </div>
+
+    <!-- Configuration Panel -->
+    <div class="config-panel" id="configPanel" style="display: none;">
+      <div class="config-header">
+        <h2 class="config-title">Channel Configuration</h2>
+        <button class="btn" id="saveConfigBtn">
+          <span>💾</span> Save Changes
+        </button>
+      </div>
+      <div class="config-grid" id="configGrid">
+        <!-- Config inputs will be dynamically inserted here -->
+      </div>
+    </div>
+  </main>
+
+  <!-- Video.js Library -->
+  <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+
+  <!-- DASH.js for DASH support -->
+  <script src="https://cdn.dashjs.org/latest/dash.all.min.js"></script>
+
+  <!-- videojs-contrib-dash plugin -->
+  <script src="https://cdn.jsdelivr.net/npm/videojs-contrib-dash@5.1.1/dist/videojs-dash.min.js"></script>
+
+  <!-- Configuration -->
+  <script src="config.js"></script>
+
+  <!-- Main Application -->
+  <script src="main.js"></script>
+</body>
+
+</html>
