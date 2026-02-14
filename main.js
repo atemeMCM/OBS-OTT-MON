@@ -148,6 +148,14 @@ function loadAllStreams() {
             // Store player reference
             players.push(player);
         });
+
+        // Reset Stop All button state since all players will be playing
+        setTimeout(() => {
+            const stopBtn = document.getElementById('stopAllBtn');
+            if (stopBtn) {
+                stopBtn.innerHTML = '<span>⏸️</span> Stop All';
+            }
+        }, 200); // Small delay to ensure players have started
     }, 100); // 100ms delay to ensure DOM is ready
 }
 
