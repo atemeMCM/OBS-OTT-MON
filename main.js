@@ -320,14 +320,30 @@ function loadAllStreams() {
             // Get the appropriate URL based on current protocol
             const streamUrl = currentProtocol === 'hls' ? channel.hls : channel.dash;
 
-            // Initialize Video.js player
-            const player = videojs(playerId, {
+            // Build player options with strict DASH configuration injected at initialization
+            const playerOptions = {
                 ...PLAYER_CONFIG,
+                html5: {
+                    ...PLAYER_CONFIG.html5,
+                    dash: {
+                        limitBitrateByPortal: true,
+                        // Passing raw options to the underlying MediaPlayer
+                        setLiveDelay: 4,
+                        setLiveCatchup: {
+                            enabled: false
+                        },
+                        setStableBufferTime: 4,
+                        setBufferTimeAtTopQuality: 4
+                    }
+                },
                 sources: [{
                     src: streamUrl,
                     type: currentProtocol === 'hls' ? 'application/x-mpegURL' : 'application/dash+xml'
                 }]
-            });
+            };
+
+            // Initialize Video.js player
+            const player = videojs(playerId, playerOptions);
 
             // Update status indicator
             const statusIndicator = document.getElementById(statusId);
@@ -342,7 +358,8 @@ function loadAllStreams() {
                         streaming: {
                             delay: { liveDelay: 4 },
                             liveCatchup: { enabled: false },
-                            buffer: { stableBufferTime: 4, bufferTimeAtTopQuality: 4 }
+                            buffer: { stableBufferTime: 4, bufferTimeAtTopQuality: 4 },
+                            abr: { limitBitrateByPortal: true }
                         }
                     });
                 }
@@ -357,7 +374,8 @@ function loadAllStreams() {
                         streaming: {
                             delay: { liveDelay: 4 },
                             liveCatchup: { enabled: false },
-                            buffer: { stableBufferTime: 4, bufferTimeAtTopQuality: 4 }
+                            buffer: { stableBufferTime: 4, bufferTimeAtTopQuality: 4 },
+                            abr: { limitBitrateByPortal: true }
                         }
                     });
                 }
@@ -367,6 +385,14 @@ function loadAllStreams() {
                     audioCtx.resume();
                 } else if (!audioCtx) {
                     initAudioContext();
+                }
+            });
+
+            // NUCLEAR OPTION: Physically block dash.js from altering the playback speed.
+            // This prevents the "Live Catchup" fast-forward/chipmunk effect entirely.
+            player.on('ratechange', () => {
+                if (player.playbackRate() !== 1) {
+                    player.playbackRate(1);
                 }
             });
 
@@ -719,6 +745,13 @@ function setGridLayout(layout) {
     // Save preference
     localStorage.setItem('currentLayout', layout);
     updateLayoutButtons();
+
+    // Force DASH.js to re-evaluate portal dimensions after grid geometry changes
+    if (typeof currentProtocol !== 'undefined' && currentProtocol === 'dash') {
+        setTimeout(() => {
+            window.dispatchEvent(new Event('resize'));
+        }, 350); // Wait for the 0.3s CSS transition to finish
+    }
 }
 
 
@@ -756,18 +789,20 @@ function updateHealthStats(player, channelId) {
         }
 
         // Try DASH
-        if (bitrate === '--' && player.tech_ && player.tech_.dashjs) {
+        if (bitrate === '--' && player.dash && player.dash.mediaPlayer) {
             try {
-                const dashMetrics = player.tech_.dashjs.getMetricsFor('video');
-                if (dashMetrics) {
-                    const bitrateList = player.tech_.dashjs.getBitrateInfoListFor('video');
-                    const currentIndex = player.tech_.dashjs.getQualityFor('video');
-                    if (bitrateList && bitrateList[currentIndex]) {
+                const mediaPlayer = player.dash.mediaPlayer;
+                if (typeof mediaPlayer.getBitrateInfoListFor === 'function' && typeof mediaPlayer.getQualityFor === 'function') {
+                    const bitrateList = mediaPlayer.getBitrateInfoListFor('video');
+                    const currentIndex = mediaPlayer.getQualityFor('video');
+
+                    if (bitrateList && bitrateList.length > 0 && currentIndex >= 0 && bitrateList[currentIndex]) {
                         bitrate = (bitrateList[currentIndex].bitrate / 1000000).toFixed(2);
                     }
                 }
             } catch (dashError) {
                 // DASH metrics not available
+                console.warn('DASH bitrate read error:', dashError);
             }
         }
 
@@ -788,11 +823,22 @@ function updateHealthStats(player, channelId) {
 
         // Try to get DASH specific buffer level first
         if (player.dash && player.dash.mediaPlayer) {
-            const dashMetrics = player.dash.mediaPlayer.getDashMetrics();
-            if (dashMetrics) {
-                const bufferLevel = dashMetrics.getCurrentBufferLevel('video');
-                if (bufferLevel !== undefined && !isNaN(bufferLevel)) {
+            // Method 1: direct MediaPlayer getter (most reliable for dash.js > 3.0)
+            if (typeof player.dash.mediaPlayer.getBufferLength === 'function') {
+                const bufferLevel = player.dash.mediaPlayer.getBufferLength('video');
+                if (bufferLevel !== undefined && !isNaN(bufferLevel) && bufferLevel > 0) {
                     buffer = bufferLevel.toFixed(1);
+                }
+            }
+
+            // Method 2: Metrics fallback
+            if (buffer === '--') {
+                const dashMetrics = player.dash.mediaPlayer.getDashMetrics();
+                if (dashMetrics && typeof dashMetrics.getCurrentBufferLevel === 'function') {
+                    const bufferLevel = dashMetrics.getCurrentBufferLevel('video');
+                    if (bufferLevel !== undefined && !isNaN(bufferLevel) && bufferLevel > 0) {
+                        buffer = bufferLevel.toFixed(1);
+                    }
                 }
             }
         }
