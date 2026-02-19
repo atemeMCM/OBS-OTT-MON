@@ -66,9 +66,127 @@ function init() {
     createVideoPlayers();
     createConfigPanel();
     setupEventListeners();
+
+    // Configure DASH.js settings globally before players are initialized
+    if (window.videojs && window.videojs.Html5DashJS) {
+        window.videojs.Html5DashJS.hook('beforeinitialize', function (player, mediaPlayer) {
+            mediaPlayer.updateSettings({
+                streaming: {
+                    delay: {
+                        liveDelay: 4 // Add a 4s delay to stabilize playback
+                    },
+                    liveCatchup: {
+                        enabled: false // Prevent speed changes (chipmunk effect)
+                    },
+                    buffer: {
+                        stableBufferTime: 4,
+                        bufferTimeAtTopQuality: 4
+                    }
+                }
+            });
+        });
+    }
+
     loadAllStreams();
     setGridLayout(currentLayout);
     startHealthMonitoring();
+
+    // Initialize Audio Context on first interaction
+    const resumeAudio = () => {
+        if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        initAudioContext();
+    };
+    document.addEventListener('click', resumeAudio);
+    document.addEventListener('keydown', resumeAudio);
+}
+
+// Audio Context State
+let audioCtx;
+let audioAnalysers = [];
+let audioAnimationId;
+
+function initAudioContext() {
+    if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+    } else if (audioCtx.state === 'running') {
+        // Even if running, we might need to connect new players
+        connectAudioAnalysers();
+        return;
+    }
+
+    connectAudioAnalysers();
+
+    // Start visual loop
+    if (!audioAnimationId) {
+        drawAudioMeters();
+    }
+}
+
+function connectAudioAnalysers() {
+    if (!audioCtx) return;
+
+    // Connect all players
+    players.forEach(player => {
+        const videoEl = player.tech_.el(); // Get raw video element
+
+        try {
+            // Create source and analyser
+            // Note: MediaElementSourceNode can only be created once per element
+            if (!videoEl._audioSource) {
+                const source = audioCtx.createMediaElementSource(videoEl);
+                videoEl._audioSource = source; // Cache it
+
+                const analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 32; // Low resolution for simple meter
+
+                // Connect: Source -> Analyser -> Destination (Out)
+                source.connect(analyser);
+                analyser.connect(audioCtx.destination);
+
+                // Get clean channel ID from element ID (e.g. player-1_html5_api -> 1)
+                const cleanId = videoEl.id.replace('player-', '').replace('_html5_api', '');
+
+                // Remove existing analyser for this channel if it exists
+                audioAnalysers = audioAnalysers.filter(a => a.id !== cleanId);
+
+                audioAnalysers.push({
+                    analyser: analyser,
+                    id: cleanId
+                });
+            }
+        } catch (e) {
+            console.warn('Audio setup failed for player:', e);
+        }
+    });
+}
+
+function drawAudioMeters() {
+    audioAnimationId = requestAnimationFrame(drawAudioMeters);
+
+    audioAnalysers.forEach(item => {
+        const { analyser, id } = item;
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        analyser.getByteFrequencyData(dataArray);
+
+        // Calculate average volume
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            sum += dataArray[i];
+        }
+        const average = sum / bufferLength;
+        const percent = Math.min(100, (average / 255) * 100 * 1.5); // 1.5x boost for visibility
+
+        // Update visual bar
+        const bar = document.getElementById(`audio-level-${id}`);
+        if (bar) {
+            bar.style.height = `${percent}%`;
+        }
+    });
 }
 
 // Login System
@@ -159,6 +277,9 @@ function createVideoPlayers() {
           </div>
         </div>
       </div>
+      <div class="audio-meter">
+        <div class="audio-level-bar" id="audio-level-${channel.id}"></div>
+      </div>
       <video
         id="player-${channel.id}"
         class="video-js vjs-default-skin"
@@ -166,6 +287,7 @@ function createVideoPlayers() {
         preload="auto"
         muted
         playsinline
+        crossorigin="anonymous"
       ></video>
     `;
         grid.appendChild(container);
@@ -213,10 +335,39 @@ function loadAllStreams() {
             // Event listeners for status
             player.on('loadstart', () => {
                 statusIndicator.className = 'status-indicator loading';
+
+                // Force DASH settings application on player initialization
+                if (currentProtocol === 'dash' && player.dash && player.dash.mediaPlayer) {
+                    player.dash.mediaPlayer.updateSettings({
+                        streaming: {
+                            delay: { liveDelay: 4 },
+                            liveCatchup: { enabled: false },
+                            buffer: { stableBufferTime: 4, bufferTimeAtTopQuality: 4 }
+                        }
+                    });
+                }
             });
 
             player.on('playing', () => {
                 statusIndicator.className = 'status-indicator playing';
+
+                // Re-apply DASH settings to be absolutely certain (some versions reset on play)
+                if (currentProtocol === 'dash' && player.dash && player.dash.mediaPlayer) {
+                    player.dash.mediaPlayer.updateSettings({
+                        streaming: {
+                            delay: { liveDelay: 4 },
+                            liveCatchup: { enabled: false },
+                            buffer: { stableBufferTime: 4, bufferTimeAtTopQuality: 4 }
+                        }
+                    });
+                }
+
+                // Retry audio context if needed
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                } else if (!audioCtx) {
+                    initAudioContext();
+                }
             });
 
             player.on('error', (e) => {
@@ -263,8 +414,13 @@ function loadAllStreams() {
             if (stopBtn) {
                 stopBtn.innerHTML = '<span>⏸️</span> Stop All';
             }
-        }, 200); // Small delay to ensure players have started
-    }, 100); // 100ms delay to ensure DOM is ready
+
+            // Re-initialize audio context connections for new players
+            if (audioCtx) {
+                initAudioContext();
+            }
+        }, 1000); // 1s delay to let DOM settle and play start
+    }, 100);
 }
 
 // Create configuration panel
@@ -295,6 +451,102 @@ function createConfigPanel() {
     `;
         configGrid.appendChild(item);
     });
+
+    // Add Data Management Section
+    const dataSection = document.createElement('div');
+    dataSection.className = 'config-data-section';
+    dataSection.style.gridColumn = '1 / -1';
+    dataSection.style.marginTop = '2rem';
+    dataSection.style.paddingTop = '1rem';
+    dataSection.style.borderTop = '1px solid rgba(255, 255, 255, 0.1)';
+    dataSection.style.display = 'flex';
+    dataSection.style.gap = '1rem';
+    dataSection.style.justifyContent = 'flex-end';
+
+    dataSection.innerHTML = `
+        <input type="file" id="importConfigInput" accept=".json" style="display: none;">
+        <button id="importConfigBtn" class="btn-secondary" style="background: rgba(255, 152, 0, 0.2); border: 1px solid rgba(255, 152, 0, 0.5); color: #ff9800;">
+            <span>📂</span> Import Config
+        </button>
+        <button id="exportConfigBtn" class="btn-secondary" style="background: rgba(76, 175, 80, 0.2); border: 1px solid rgba(76, 175, 80, 0.5); color: #4caf50;">
+            <span>💾</span> Export Config
+        </button>
+    `;
+    configGrid.appendChild(dataSection);
+
+    // Re-attach listeners for new buttons
+    const exportBtn = document.getElementById('exportConfigBtn');
+    if (exportBtn) {
+        exportBtn.addEventListener('click', exportConfig);
+    }
+
+    const importBtn = document.getElementById('importConfigBtn');
+    const importInput = document.getElementById('importConfigInput');
+    if (importBtn && importInput) {
+        importBtn.addEventListener('click', () => importInput.click());
+        importInput.addEventListener('change', importConfig);
+    }
+}
+
+// Data Management Functions
+function exportConfig() {
+    const dataStr = JSON.stringify(channelConfig, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "obs-player-config.json";
+    document.body.appendChild(a);
+    a.click();
+
+    setTimeout(() => {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    }, 0);
+}
+
+function importConfig(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function (e) {
+        try {
+            const data = JSON.parse(e.target.result);
+
+            // Basic validation
+            if (!Array.isArray(data)) throw new Error('Root must be an array');
+
+            // Check first item structure
+            if (data.length > 0) {
+                const item = data[0];
+                if (!item.id || !item.name || !item.hls || !item.dash) {
+                    throw new Error('Invalid channel format');
+                }
+            }
+
+            // Apply config
+            channelConfig = data;
+            saveConfig();
+
+            // Reload UI
+            createVideoPlayers(); // Recreate grid structure
+            loadAllStreams();     // Connect players
+            createConfigPanel();  // Update inputs
+            updateLayoutButtons(); // Update 4xN label
+
+            alert('Configuration imported successfully!');
+
+        } catch (err) {
+            console.error('Import failed:', err);
+            alert('Failed to import configuration: ' + err.message);
+        }
+
+        // Reset input so same file can be selected again
+        event.target.value = '';
+    };
+    reader.readAsText(file);
 }
 
 // Setup event listeners
@@ -321,6 +573,9 @@ function setupEventListeners() {
             }
         });
     });
+
+    // Initial update for dynamic label
+    updateLayoutButtons();
 
     // Mute all button
     document.getElementById('muteAllBtn').addEventListener('click', () => {
@@ -363,6 +618,8 @@ function setupEventListeners() {
     document.getElementById('toggleConfigBtn').addEventListener('click', () => {
         const panel = document.getElementById('configPanel');
         panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        // Re-create panel to ensure state is fresh (and listeners attached)
+        createConfigPanel();
     });
 
     // Save config button
@@ -379,6 +636,7 @@ function setupEventListeners() {
         });
 
         saveConfig();
+        updateLayoutButtons(); // Update label if channel count changed (unlikely here but good practice)
         loadAllStreams();
 
         // Show feedback
@@ -402,6 +660,27 @@ function updateProtocolButtons() {
     });
 }
 
+function updateLayoutButtons() {
+    document.querySelectorAll('.layout-btn').forEach(btn => {
+        // Dynamic label for 4x4 button
+        if (btn.dataset.layout === '4x4') {
+            const rows = Math.ceil(channelConfig.length / 4);
+            // Only show dynamic label if rows > 4
+            if (rows > 4) {
+                btn.innerHTML = `4&times;${rows}`;
+            } else {
+                btn.innerHTML = `4&times;4`;
+            }
+        }
+
+        if (btn.dataset.layout === currentLayout) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+}
+
 // Grid Layout Functions
 function setGridLayout(layout) {
     currentLayout = layout;
@@ -415,14 +694,20 @@ function setGridLayout(layout) {
 
     // Show/hide channels based on layout
     const containers = document.querySelectorAll('.video-container');
-    const channelCounts = {
-        '4x4': 16,
-        '3x3': 9,
-        '2x2': 4,
-        '1x1': 1
-    };
 
-    const visibleCount = channelCounts[layout];
+    let visibleCount;
+    if (layout === '4x4') {
+        // Show all channels for 4xN layout
+        visibleCount = channelConfig.length;
+    } else {
+        const channelCounts = {
+            '3x3': 9,
+            '2x2': 4,
+            '1x1': 1
+        };
+        visibleCount = channelCounts[layout];
+    }
+
     containers.forEach((container, index) => {
         if (index < visibleCount) {
             container.classList.remove('hidden');
@@ -436,15 +721,6 @@ function setGridLayout(layout) {
     updateLayoutButtons();
 }
 
-function updateLayoutButtons() {
-    document.querySelectorAll('.layout-btn').forEach(btn => {
-        if (btn.dataset.layout === currentLayout) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
-    });
-}
 
 // Health Monitoring Functions
 function startHealthMonitoring() {
@@ -509,11 +785,47 @@ function updateHealthStats(player, channelId) {
 
         // Get buffer health
         let buffer = '--';
-        const buffered = player.buffered();
-        if (buffered.length > 0) {
-            const currentTime = player.currentTime();
-            const bufferedEnd = buffered.end(buffered.length - 1);
-            buffer = (bufferedEnd - currentTime).toFixed(1);
+
+        // Try to get DASH specific buffer level first
+        if (player.dash && player.dash.mediaPlayer) {
+            const dashMetrics = player.dash.mediaPlayer.getDashMetrics();
+            if (dashMetrics) {
+                const bufferLevel = dashMetrics.getCurrentBufferLevel('video');
+                if (bufferLevel !== undefined && !isNaN(bufferLevel)) {
+                    buffer = bufferLevel.toFixed(1);
+                }
+            }
+        }
+
+        // Fallback to standard HTML5 buffered calculation
+        if (buffer === '--') {
+            const buffered = player.buffered();
+            if (buffered.length > 0) {
+                const currentTime = player.currentTime();
+
+                // For live streams, the buffered ranges can be disjoint or shifted
+                // We find the range that currently encompasses currentTime
+                let currentRangeEnd = 0;
+                let foundRange = false;
+
+                for (let i = 0; i < buffered.length; i++) {
+                    if (currentTime >= buffered.start(i) && currentTime <= buffered.end(i)) {
+                        currentRangeEnd = buffered.end(i);
+                        foundRange = true;
+                        break;
+                    }
+                }
+
+                // If we aren't inside a range, just take the End of the last range (less accurate for live)
+                if (!foundRange) {
+                    currentRangeEnd = buffered.end(buffered.length - 1);
+                }
+
+                const calculatedBuffer = currentRangeEnd - currentTime;
+
+                // Ensure we don't display negative buffer (happens with live stream time-drifts)
+                buffer = Math.max(0, calculatedBuffer).toFixed(1);
+            }
         }
 
         // Get resolution

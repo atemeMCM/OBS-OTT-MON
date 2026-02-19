@@ -630,3 +630,35 @@ body {
   min-height: 1.25em;
   font-weight: 500;
 }
+
+/* Audio Level Meters */
+.audio-meter {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 60%;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 3px;
+  overflow: hidden;
+  z-index: 90; /* Below overlay (100) but above video */
+  pointer-events: none;
+}
+
+.audio-level-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 0%;
+  background: linear-gradient(to top, 
+    #4caf50 0%, 
+    #4caf50 60%, 
+    #ffeb3b 60%, 
+    #ffeb3b 85%, 
+    #f44336 85%, 
+    #f44336 100%
+  );
+  transition: height 0.1s ease-out;
+}
